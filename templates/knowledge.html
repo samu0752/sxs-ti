@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Base de conhecimento{% endblock %}
+{% block content %}
+<div class="page-heading"><h1>Base de conhecimento</h1></div>
+<section class="panel padded">
+  <form class="filters" method="get">
+    <label>Categoria<select name="category"><option value="">Todas</option>{% for category in categories %}<option {% if selected == category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></label>
+    <button class="button secondary">Filtrar</button>
+  </form>
+  {% for article in articles %}
+  <article class="panel-separator" id="artigo-{{ article.id }}"><h2>{{ article.title }}</h2><small>{{ article.category }}</small><p class="preserve">{{ article.body }}</p></article>
+  {% else %}<p>Nenhum artigo encontrado.</p>{% endfor %}
+</section>
+{% if g.technician %}
+<section class="panel padded">
+  <h2>Publicar artigo</h2>
+  <form class="stack" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Categoria<select name="category" required>{% for option in categories %}<option>{{ option }}</option>{% endfor %}</select></label>
+    <label>Título<input name="title" maxlength="120" required></label>
+    <label>Conteúdo visível a solicitantes<textarea name="body" maxlength="4000" rows="5" required></textarea></label>
+    <button class="button primary">Publicar</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

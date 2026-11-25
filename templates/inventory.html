@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Inventário{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Inventário</h1><p>Ativos vinculados a solicitantes.</p></div></div>
+<section class="panel padded">
+  <h2>Cadastrar ativo</h2>
+  <form class="form-grid" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Patrimônio<input name="tag" maxlength="40" required></label>
+    <label>Equipamento<input name="equipment" maxlength="120" required></label>
+    <label>Usuário<select name="user_id" required><option value="">Selecione</option>{% for user in users %}<option value="{{ user.id }}">{{ user.name }}</option>{% endfor %}</select></label>
+    <div class="wide"><button class="button primary">Cadastrar</button></div>
+  </form>
+</section>
+<section class="panel padded">
+  <h2>Ativos</h2>
+  {% if assets %}<table><thead><tr><th scope="col">Patrimônio</th><th scope="col">Equipamento</th><th scope="col">Usuário</th></tr></thead>
+  <tbody>{% for asset in assets %}<tr><td>{{ asset.tag }}</td><td>{{ asset.equipment }}</td><td>{{ asset.name }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}<p>Nenhum ativo cadastrado.</p>{% endif %}
+</section>
+{% endblock %}

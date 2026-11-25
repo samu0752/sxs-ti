@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Macros{% endblock %}
+{% block content %}
+<div class="page-heading"><h1>Macros de atendimento</h1></div>
+<section class="panel padded">
+  <h2>Salvar macro</h2>
+  <form class="stack" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Título <small>Use o mesmo título para atualizar uma macro</small><input name="title" maxlength="80" required></label>
+    <label>Resposta<textarea name="body" rows="4" maxlength="2000" required></textarea></label>
+    <button class="button primary">Salvar</button>
+  </form>
+</section>
+<section class="panel padded">
+  <h2>Respostas cadastradas</h2>
+  {% for macro in macros %}<article class="panel-separator"><h3>{{ macro.title }}</h3><p class="preserve">{{ macro.body }}</p></article>{% endfor %}
+</section>
+{% endblock %}

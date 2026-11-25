@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Visão geral{% endblock %}
+{% block content %}
+<div class="page-heading dashboard-heading">
+  <div><h1>{{ 'Visão geral do atendimento' if g.technician or g.demo else 'Meus chamados' }}</h1><p>{{ 'Acompanhe a fila de suporte e os prazos de atendimento.' if g.technician or g.demo else 'Abra solicitações e acompanhe as respostas da equipe de TI.' }}</p></div>
+  {% if g.user %}<a class="button primary" href="#novo-chamado"><span aria-hidden="true">＋</span> Novo chamado</a>{% endif %}
+</div>
+<div class="metrics" aria-label="Indicadores do atendimento">
+  <article><span>Chamados ativos</span><strong>{{ active_count }}</strong></article>
+  <article><span>Concluídos</span><strong>{{ resolved_count }}</strong></article>
+  <article class="overdue-card"><span>Fora do prazo</span><strong>{{ overdue_count }}</strong><a href="{{ url_for('index', queue='atrasados') }}#chamados">Ver atrasados <span aria-hidden="true">↗</span></a></article>
+  <article><span>1ª resposta média</span><strong>{{ avg_response|duration }}</strong></article>
+  <article><span>Resolução média</span><strong>{{ avg_minutes|duration }}</strong></article>
+  <article><span>SLA cumprido</span><strong>{{ dashboard.sla ~ '%' if dashboard.sla is not none else '—' }}</strong></article>
+  <article><span>CSAT médio</span><strong>{{ dashboard.csat ~ '/5' if dashboard.csat is not none else '—' }}</strong></article>
+</div>
+<div class="operations-grid">
+<section id="chamados" class="panel">
+  <div class="panel-heading"><div><h2>Fila de chamados</h2><p>{{ tickets|length }} {{ 'resultado' if tickets|length == 1 else 'resultados' }}</p></div>
+    <div class="queue-links">
+      {% for label, value in [('Todos', ''), ('Minha fila', 'minha'), ('Sem responsável', 'livre'), ('Atrasados', 'atrasados')] %}
+      {% if value not in ('minha', 'livre') or g.technician or (g.demo and value == 'livre') %}
+      <a href="{{ url_for('index', queue=value) }}#chamados" {% if filters.queue == value %}aria-current="true"{% endif %}>{{ label }}</a>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  <form class="filters" action="{{ url_for('index') }}#chamados">
+    <input type="hidden" name="queue" value="{{ filters.queue }}">
+    <label class="search">Busca<input type="search" name="q" value="{{ filters.q }}" placeholder="Protocolo, título ou solicitante" maxlength="100"></label>
+    {% for label, key, options in [('Status', 'status', statuses), ('Categoria', 'category', categories), ('Prioridade', 'priority', priorities)] %}
+    <label>{{ label }}<select name="{{ key }}"><option value="">Todos</option>{% for option in options %}<option {% if filters[key] == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    {% endfor %}
+    <button class="button secondary">Filtrar</button>
+    {% if filters.q or filters.status or filters.category or filters.priority %}<a class="text-link" href="{{ url_for('index', queue=filters.queue) }}#chamados">Limpar</a>{% endif %}
+  </form>
+  {% if tickets %}
+  <div class="table-scroll" role="region" aria-label="Lista de chamados" tabindex="0">
+    <table>
+      <thead><tr><th scope="col">Chamado</th><th scope="col">Prioridade</th><th scope="col">Status</th><th scope="col">Responsável</th><th scope="col">Prazo</th></tr></thead>
+      <tbody>
+      {% for ticket in tickets %}
+      <tr>
+        <td><a class="ticket-link" href="{{ url_for('ticket_detail', ticket_id=ticket.id) }}">{{ ticket.title }}</a><small><span class="protocol">{{ ticket.protocol }}</span> · {{ ticket.ticket_type }} · {{ ticket.category }}</small></td>
+        <td><span class="badge {{ ticket.priority|tone }}">{{ ticket.priority }}</span></td>
+        <td><span class="badge {{ ticket.status|tone }}">{{ ticket.status }}</span></td>
+        <td>{{ ticket.assignee or 'Sem responsável' }}</td>
+        <td><span class="badge {{ timings[ticket.id].color }}">{{ timings[ticket.id].label }}</span>{% if ticket.escalated_at %}<small>Escalonado</small>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<div class="empty">Nenhum chamado encontrado.</div>{% endif %}
+</section>
+<aside class="panel status-panel" aria-labelledby="status-title">
+  <div class="panel-heading"><div><h2 id="status-title">Chamados por status</h2><p>{{ active_count + resolved_count }} no total</p></div></div>
+  <ul class="status-list">
+    {% set total = active_count + resolved_count %}
+    {% for status, count in status_counts.items() %}
+    <li>
+      <div><a href="{{ url_for('index', status=status) }}#chamados">{{ status }}</a><strong>{{ count }}</strong></div>
+      <progress class="status-progress" value="{{ count }}" max="{{ total or 1 }}" aria-label="{{ status }}"></progress>
+    </li>
+    {% endfor %}
+  </ul>
+</aside>
+</div>
+<section class="panel padded dashboard-breakdown" aria-label="Indicadores detalhados">
+  <div><h2>Aberturas em 7 dias</h2><ul>{% for day, count in dashboard.trend %}<li><span>{{ day }}</span><strong>{{ count }}</strong></li>{% endfor %}</ul></div>
+  <div><h2>Categorias mais frequentes</h2><ul>{% for category, count in dashboard.categories %}<li><span>{{ category }}</span><strong>{{ count }}</strong></li>{% else %}<li>Sem chamados.</li>{% endfor %}</ul></div>
+  {% if g.technician or g.demo %}
+  <div><h2>Chamados ativos por técnico</h2><ul>{% for person, count in dashboard.workload %}<li><span>{{ person }}</span><strong>{{ count }}</strong></li>{% else %}<li>Sem chamados ativos.</li>{% endfor %}</ul>
+  <a class="text-link" href="{{ url_for('export_reports') }}">Exportar CSV</a></div>
+  {% endif %}
+</section>
+{% if g.demo %}
+<form class="demo-reset" method="post" action="{{ url_for('reset_demo') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="button secondary">Restaurar dados fictícios</button>
+</form>
+{% endif %}
+{% if g.user %}
+<section id="novo-chamado" class="panel create-panel">
+  <div class="panel-heading"><h2>Novo chamado</h2></div>
+  <form class="form-grid" action="{{ url_for('create_ticket') }}" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if g.technician %}
+    <label>Nome do solicitante<input name="requester" value="{{ form_values.get('requester', '') }}" maxlength="80" required></label>
+    <label>E-mail do solicitante<input name="email" value="{{ form_values.get('email', '') }}" type="email" maxlength="120" required></label>
+    {% endif %}
+    <label class="wide">Título<input name="title" value="{{ form_values.get('title', '') }}" maxlength="120" required></label>
+    <label>Categoria<select name="category" data-suggestions="{{ url_for('suggest_articles') }}" required><option value="">Selecione</option>{% for category in categories %}<option {% if form_values.get('category') == category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></label>
+    <label>Prioridade<select name="priority" required><option value="">Selecione</option>{% for priority in priorities %}<option {% if form_values.get('priority') == priority %}selected{% endif %}>{{ priority }}</option>{% endfor %}</select></label>
+    <div class="wide" id="kb-suggestions" aria-live="polite" hidden></div>
+    <label>Tipo<select name="ticket_type">{% for value in ticket_types %}<option {% if form_values.get('ticket_type', 'Incidente') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    {% if assets and not g.technician %}
+    <label>Ativo<select name="asset_id"><option value="">Sem ativo</option>{% for asset in assets %}<option value="{{ asset.id }}" {% if form_values.get('asset_id')|int == asset.id %}selected{% endif %}>{{ asset.tag }} · {{ asset.equipment }}</option>{% endfor %}</select></label>
+    {% endif %}
+    <label>Anexo <small>Até 2 MB</small><input type="file" name="attachment" accept=".png,.jpg,.jpeg,.pdf,.txt,.log"></label>
+    <label class="wide">Descrição<textarea name="description" maxlength="2000" rows="4" required>{{ form_values.get('description', '') }}</textarea></label>
+    <div class="wide"><button class="button primary">Registrar chamado</button></div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

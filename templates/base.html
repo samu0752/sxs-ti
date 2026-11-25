@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}Central de chamados{% endblock %} · SXS TI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script src="{{ url_for('static', filename='service-desk.js') }}" defer></script>
+</head>
+<body>
+<a class="skip" href="#conteudo">Ir para o conteúdo</a>
+{% if g.user or g.demo %}
+<header class="app-header">
+  <div class="header-inner">
+    <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">SXS</span><span>SXS <strong>TI</strong><small>Central de chamados</small></span></a>
+    <nav class="header-nav" aria-label="Central de chamados">
+      <a href="{{ url_for('index') }}" {% if request.endpoint == 'index' and request.args.get('queue') != 'minha' %}aria-current="page"{% endif %}>Visão geral</a>
+      <a href="{{ url_for('index') }}#chamados">Chamados</a>
+      {% if g.technician %}<a href="{{ url_for('index', queue='minha') }}#chamados" {% if request.endpoint == 'index' and request.args.get('queue') == 'minha' %}aria-current="page"{% endif %}>Minha fila</a>{% endif %}
+      <a href="{{ url_for('knowledge_base') }}">Conhecimento</a>
+      {% if g.technician %}<a href="{{ url_for('inventory') }}">Inventário</a>{% endif %}
+      {% if g.admin %}<a href="{{ url_for('edit_macros') }}">Macros</a>{% endif %}
+      {% if g.admin %}<a href="{{ url_for('manage_users') }}" {% if request.endpoint == 'manage_users' %}aria-current="page"{% endif %}>Contas de acesso</a>{% endif %}
+    </nav>
+    <div class="header-account">
+      {% if g.user %}
+      <div class="profile"><span class="avatar" aria-hidden="true">{{ g.user.name[0]|upper }}</span><div><strong>{{ g.user.name }}</strong><small>{{ 'Administrador' if g.admin else 'Técnico' if g.technician else 'Solicitante' }}</small></div></div>
+      <form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="signout">Sair</button></form>
+      {% else %}<span class="demo-label">Demonstração · somente leitura</span>{% endif %}
+    </div>
+  </div>
+</header>
+{% endif %}
+<main id="conteudo" class="{{ 'workspace' if g.user or g.demo else 'login-wrap' }}">
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+  <p class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</p>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

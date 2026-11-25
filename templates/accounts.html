@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ "Contas de acesso" if admin else "Criar conta" }}{% endblock %}
+{% block content %}
+{% if admin %}
+<div class="page-heading"><div><h1>Contas de acesso</h1><p>Cadastre solicitantes e técnicos para a central.</p></div></div>
+<section class="panel">
+  <div class="panel-heading"><h2>Nova conta</h2></div>
+{% else %}
+<section class="login-panel">
+  <div class="brand login-brand"><span class="brand-mark" aria-hidden="true">SXS</span><span>SXS <strong>TI</strong><small>Central de chamados</small></span></div>
+  <h1>Criar conta</h1>
+{% endif %}
+  <form class="{{ 'form-grid' if admin else 'stack' }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Nome<input name="name" autocomplete="name" maxlength="80" value="{{ request.form.get('name', '') }}" required></label>
+    <label>E-mail<input name="email" type="email" autocomplete="email" maxlength="120" value="{{ request.form.get('email', '') }}" required></label>
+    <label>Usuário<input name="username" autocomplete="username" maxlength="32" minlength="3" autocapitalize="none" spellcheck="false" value="{{ request.form.get('username', '') }}" required></label>
+    {% if admin %}
+    <label>Perfil<select name="role" required><option value="solicitante">Solicitante</option><option value="tecnico" {% if request.form.get('role') == 'tecnico' %}selected{% endif %}>Técnico</option></select></label>
+    {% endif %}
+    <label>Senha <small>12 caracteres ou mais</small><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    <label>Confirmar senha<input name="password_confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    <div class="wide"><button class="button primary">Criar conta</button></div>
+  </form>
+  {% if not admin %}<p class="panel-separator">Já tem conta? <a class="text-link" href="{{ url_for('login') }}">Entrar</a></p>{% endif %}
+</section>
+{% if admin %}
+<section class="panel create-panel">
+  <div class="panel-heading"><h2>Contas cadastradas</h2></div>
+  <div class="table-scroll" role="region" aria-label="Contas cadastradas" tabindex="0">
+    <table>
+      <thead><tr><th scope="col">Nome</th><th scope="col">Usuário</th><th scope="col">E-mail</th><th scope="col">Perfil</th></tr></thead>
+      <tbody>
+      {% for account in accounts %}
+      <tr><td>{{ account.name }}</td><td>{{ account.username or '—' }}</td><td>{{ account.email }}</td><td>{{ 'Administrador' if account.can_manage_users else 'Técnico' if account.role == 'tecnico' else 'Solicitante' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
