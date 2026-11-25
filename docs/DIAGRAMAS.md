@@ -1,79 +1,62 @@
 # Diagramas do SXS TI
 
-## Abertura e atendimento
+## Abertura, SLA e atendimento
 
-~~~mermaid
+```mermaid
 flowchart TD
-    A["Solicitante abre chamado"] --> B["Protocolo é gerado"]
+    A["Solicitante abre chamado"] --> B["Protocolo único gerado"]
     B --> C["Técnico assume ou atribui"]
-    C --> D["Diagnóstico e mensagens"]
-    D --> E{"Precisa de informações?"}
-    E -->|Sim| F["Aguardando solicitante"]
+    C --> D["Diagnóstico, macros e mensagens"]
+    D --> E{"Aguardando solicitante?"}
+    E -->|Sim| F["Pausa automática de SLA"]
     F --> D
-    E -->|Não| G["Registra solução"]
-    G --> H["Resolvido ou fechado"]
-~~~
+    E -->|Não| G{"Consumo de SLA ≥ 85%?"}
+    G -->|Sim| H["Escalonamento automático (+1 prioridade)"]
+    H --> I["Registro obrigatório de solução"]
+    G -->|Não| I
+    I --> J["Resolvido ou fechado + CSAT"]
+```
 
-O fluxo mostra um roteiro típico. A interface permite ao técnico escolher entre os cinco status. A passagem de um status ativo para **Resolvido** ou **Fechado** exige uma solução.
+## Perfis, permissões e auditoria
 
-## Perfis e permissões
-
-~~~mermaid
+```mermaid
 flowchart TD
-    Cadastro["Cadastro pela tela de login"] --> S["Solicitante"]
-    Admin["Administrador"] --> Criar["Contas de acesso"]
-    Criar --> S
-    Criar --> T["Técnico"]
-    S --> Proprios["Consulta e responde aos próprios chamados"]
-    T --> Fila["Gerencia a fila e registra soluções"]
+    Cadastro["Cadastro público (/criar-conta)"] --> S["Solicitante"]
+    Admin["Administrador"] --> Contas["Contas de acesso"]
+    Admin --> Auditoria["Trilha de auditoria (/administracao/auditoria)"]
+    Admin --> Macros["Macros de atendimento"]
+    Contas --> S
+    Contas --> T["Técnico"]
+    S --> Proprios["Consulta, comenta e avalia apenas os próprios chamados"]
+    T --> Fila["Gerencia fila, CMDB, base de conhecimento, vínculos e exportação CSV"]
     Admin --> Fila
-~~~
+```
 
-O administrador usa o perfil técnico e tem permissão adicional para gerenciar contas. A primeira conta administrativa é criada no terminal.
+## Modelo relacional completo
 
-## Modelo de dados
-
-~~~mermaid
+```mermaid
 erDiagram
-    USERS o|--o{ TICKETS : solicita
-    USERS o|--o{ TICKETS : atende
-    TICKETS ||--o{ TIMELINE : registra
-    USERS {
-        integer id PK
-        string username
-        string email
-        string role
-        integer can_manage_users
-    }
-    TICKETS {
-        integer id PK
-        string protocol
-        integer owner_id FK
-        integer assignee_id FK
-        string priority
-        string status
-    }
-    TIMELINE {
-        integer id PK
-        integer ticket_id FK
-        string actor
-        string kind
-        integer internal
-    }
-~~~
+    USERS ||--o{ TICKETS : "solicita / atende"
+    USERS ||--o{ ASSETS : "possui"
+    USERS ||--o{ AUDIT_LOGS : "executa"
+    USERS ||--o{ KB_ARTICLES : "publica"
+    ASSETS ||--o{ TICKETS : "vincula"
+    TICKETS ||--o{ TIMELINE : "registra"
+    TICKETS ||--o{ SLA_PAUSES : "pausa"
+    TICKETS ||--o{ ATTACHMENTS : "anexa"
+    TICKETS ||--o{ TICKET_LINKS : "relaciona"
+```
 
-A autoria de cada evento é guardada como texto. Chamados antigos e exemplos podem ficar sem conta de solicitante vinculada. Um chamado também pode ficar sem técnico responsável.
+## Atribuição com histórico transacional
 
-## Atribuição com histórico
-
-~~~mermaid
+```mermaid
 sequenceDiagram
     actor T as Técnico
     participant F as Flask
-    participant D as SQLite
+    participant D as SQLite (WAL)
     T->>F: Salvar responsável
-    F->>F: Validar sessão e formulário
-    F->>D: Alterar responsável e registrar evento
-    D-->>F: Confirmar transação
+    F->>F: Validar sessão, CSRF e perfil técnico
+    F->>D: BEGIN IMMEDIATE · atualizar responsável + timeline
+    D-->>F: Commit confirmado
     F-->>T: Exibir ficha atualizada
-~~~
+```
