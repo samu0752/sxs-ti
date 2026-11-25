@@ -170,3 +170,7 @@ dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .demo-reset { margin: 1rem 0; }
 section.panel + section.panel { margin-block-start: 1rem; }
 #kb-suggestions { border-left: .2rem solid #3656a6; padding-left: .75rem; }
+.audit-filters { grid-template-columns: repeat(2, minmax(160px, 1fr)) auto; }
+.error-panel { max-width: 560px; margin: 28px auto; display: grid; gap: 12px; }
+.error-panel .badge { justify-self: start; }
+.error-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
