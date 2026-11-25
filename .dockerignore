@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+instance
+.env
+.env.*
+__pycache__
+**/__pycache__
+*.db
+*.zip
+.coverage*
+coverage.xml
+htmlcov
+.mypy_cache
+.ruff_cache

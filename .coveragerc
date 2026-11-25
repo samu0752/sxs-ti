@@ -1,0 +1,13 @@
+[run]
+branch = True
+source =
+    app
+    sxs_core
+
+[report]
+show_missing = True
+exclude_also =
+    if __name__ == .__main__.:
+
+[xml]
+output = coverage.xml
