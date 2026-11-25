@@ -31,7 +31,7 @@ jobs:
           name: cobertura-python-${{ matrix.python }}
           path: coverage.xml
       - run: python -m pip_audit
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: matrix.python == '3.11' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           files: coverage.xml
