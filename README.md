@@ -3,65 +3,97 @@
 
 # SXS TI | Central de Chamados
 
-## 1. Problema
+Aplicação web de service desk feita em Python (Flask) e SQLite para registrar, acompanhar e encerrar chamados de TI com controle de SLA em horário comercial, inventário de equipamentos, base de conhecimento, auditoria de acesso e exportação de dados.
 
-Solicitações de suporte espalhadas entre mensagens e e-mails dificultam a priorização e o acompanhamento dos prazos. O SXS TI reúne protocolo, responsável, mensagens, solução, anexos e satisfação em uma ficha. Solicitantes acompanham seus próprios chamados. Técnicos operam a fila, e administradores também gerenciam contas e macros.
+## Fluxo e arquitetura
 
-## 2. Demo
+### Fluxo de atendimento e SLA
 
-A [demonstração pública no Render](https://central-chamados-ti-samuel.onrender.com) usa exemplos fictícios e abre sem login. O botão **Restaurar dados fictícios** repõe os chamados de exemplo. A credencial abaixo é criada apenas no banco local pelo comando `preparar-teste`.
+```mermaid
+flowchart LR
+    A["Abertura do chamado"] --> B["Protocolo único + SLA útil<br/>(Seg a Sex, 08h às 18h BRT)"]
+    B --> C["Fila técnica"]
+    C --> D{"Aguardando<br/>solicitante?"}
+    D -- Sim --> E["Pausa no SLA"]
+    E --> C
+    D -- Não --> F{"Consumo >= 85%?"}
+    F -- Sim --> G["Sobe 1 nível de prioridade<br/>(mantém prazo original)"]
+    G --> H["Mensagens, macros e anexos"]
+    F -- Não --> H
+    H --> I["Registro obrigatório de solução"]
+    I --> J["Resolvido / Fechado + CSAT"]
+```
 
-| Acesso | Usuário | Senha |
-|---|---|---|
-| Técnico de teste local | `tecnico-teste` | `SxsTiLocal-2026!` |
+### Arquitetura e segurança
 
-![Fluxo ilustrado de abertura, atendimento e fechamento](docs/demo-fluxo.gif)
+```mermaid
+flowchart TD
+    Cliente["Navegador"] --> HTTP["Camada HTTP (Flask)<br/>CSP · HSTS · X-Frame-Options · Referrer-Policy<br/>CSRF e limite de tentativas por IP"]
+    HTTP --> Auth["Sessão e perfis<br/>Solicitante · Técnico · Administrador<br/>Bloqueio após 5 falhas"]
+    Auth --> App["Rotas e regras<br/>Chamados · Inventário · Conhecimento · Macros · Auditoria"]
+    App --> Core["sxs_core.py<br/>Cálculo de SLA útil · Validação de anexos · Migrações"]
+    Core --> DB[("SQLite (WAL)<br/>Migrações versionadas + view SQL")]
+    DB --> Rel["Relatórios<br/>Exportação CSV · Script CLI com saída JSON"]
+```
 
-O Render Free pode hibernar após 15 minutos sem tráfego. A primeira abertura pode demorar, e o disco efêmero perde as alterações locais após hibernação, reinício ou redeploy. [Documentação do Render Free](https://render.com/docs/free)
+### Modelo de dados
 
-## 3. Como rodar em 3 comandos
+```mermaid
+erDiagram
+    USERS ||--o{ TICKETS : "solicita / atende"
+    USERS ||--o{ ASSETS : "possui"
+    USERS ||--o{ AUDIT_LOGS : "registra"
+    ASSETS ||--o{ TICKETS : "vincula"
+    TICKETS ||--o{ TIMELINE : "historico"
+    TICKETS ||--o{ SLA_PAUSES : "pausas"
+    TICKETS ||--o{ ATTACHMENTS : "anexos"
+    TICKETS ||--o{ TICKET_LINKS : "vinculos"
+```
 
-Com Python 3.11+ e no diretório que contém `app.py`:
+Outros diagramas (permissões e sequência) estão em [docs/DIAGRAMAS.md](docs/DIAGRAMAS.md).
 
-```powershell
+## Funcionalidades principais
+
+- **Atendimento e SLA:** abertura com protocolo sequencial, classificação (`Incidente`, `Requisição`, `Problema`), contagem de SLA apenas em minutos úteis, pausa automática quando o chamado aguarda retorno do solicitante, escalonamento automático ao atingir 85% do prazo e avaliação CSAT após fechamento.
+- **Operação técnica:** fila com filtros por busca, status, categoria e prioridade, notas internas invisíveis ao solicitante, macros editáveis, vínculos entre chamados (relacionado/duplicado), base de conhecimento com sugestão por categoria e inventário de ativos (CMDB).
+- **Segurança:** escopo por dono em todas as rotas para evitar IDOR, proteção CSRF com comparação em tempo constante, bloqueio de conta por 15 minutos após 5 falhas de login, limitação por IP no login e no cadastro, sessão com expiração de 8 horas, validação de assinatura de arquivos nos anexos (PNG, JPEG, PDF e UTF-8) e tela administrativa de trilha de auditoria (`/administracao/auditoria`).
+- **Dados e relatórios:** painel com volume de 7 dias, categorias, carga por técnico, tempo médio de primeira resposta/resolução, cumprimento de SLA e CSAT; view SQL (`vw_relatorio_chamados`), exportação CSV com proteção contra fórmulas de planilha e script `scripts/analise_chamados.py` para gerar indicadores no terminal ou em JSON.
+
+## Como rodar localmente
+
+Por padrão, a aplicação inicia com o banco vazio (`LOAD_SAMPLE_DATA=0`). Com Python 3.11+ na pasta do `app.py`:
+
+```bash
 python -m pip install -r requirements.txt
-python -m flask --app app preparar-teste
+python -m flask --app app criar-usuario --nome "Seu Nome" --email "voce@local.dev" --perfil administrador --usuario admin
 python -m flask --app app run
 ```
 
-Acesse [http://127.0.0.1:5000/](http://127.0.0.1:5000/). Em um banco novo, os chamados fictícios são carregados por padrão. Para começar vazio, exporte `LOAD_SAMPLE_DATA=0` antes da primeira execução. Use um ambiente virtual para isolar as dependências quando necessário.
+Depois, abra `http://127.0.0.1:5000/` e faça login com o usuário criado.
 
-Para contas permanentes, use `python -m flask --app app criar-usuario`. Consulte `.env.example` e [operação](docs/OPERACAO.md) para configurar o ambiente, HTTPS, banco e processamento do SLA.
+- **Configuração:** veja `.env.example` e [docs/OPERACAO.md](docs/OPERACAO.md) para `SECRET_KEY`, HTTPS (`SESSION_COOKIE_SECURE=1`) e caminho do banco.
+- **Escalonamento agendado:** `python -m flask --app app processar-sla`
+- **Análise via CLI:**
 
-## 4. Decisões técnicas
-
-- Flask e Jinja2 renderizam o atendimento. JavaScript sugere artigos ao selecionar a categoria e permite aplicar macros editáveis em uma resposta.
-- SQLite armazena dados, anexos e eventos. As migrações são transacionais e preservam os bancos legados. O demo lê só registros fictícios. [Arquitetura](docs/relatorio-tecnico.md)
-- O SLA conta minutos úteis de segunda a sexta, das 08h às 18h BRT. Espera pelo solicitante pausa a contagem. A partir de 85% do orçamento de primeira resposta pendente ou de resolução, o sistema destaca o chamado e aumenta a prioridade operacional em um nível, uma vez, preservando o prazo original. [Regras de atendimento](docs/REGRAS.md)
-- Os registros JSON descrevem requisições e notificações simuladas, sem incluir e-mails, senhas ou conteúdo de chamados. A trilha administrativa e de autenticação fica no SQLite. [Modelo de ameaças](docs/SEGURANCA.md)
-- A view e a exportação CSV apoiam o acompanhamento operacional. O painel mostra volume recente, categorias, carga, SLA e CSAT. [Relatórios](docs/RELATORIOS.md)
-
-| Componente | SXS TI Python neste ZIP | Contraparte Java `sxs-ti-java` |
-|---|---|---|
-| Aplicação web | Flask | Spring Boot |
-| Templates | Jinja2 | Thymeleaf |
-| Persistência | SQLite | PostgreSQL |
-| Migrações | SQL e tabela `schema_version` | Flyway |
-| Escopo comparado | Implementação desta entrega | Referência de arquitetura |
-
-## 5. Testes
-
-```powershell
-python -m pip install -r requirements-dev.txt
-python -m coverage run -m unittest discover -s tests -v
-python -m coverage report
+```bash
+python scripts/analise_chamados.py instance/chamados.db --escopo operacional --exportar-json kpis.json
 ```
 
-O GitHub Actions executa os testes, publica `coverage.xml` e verifica Ruff, Mypy, Bandit e pip-audit. Os badges apontam para o repositório `samu0752/sxs-ti`. Se o nome do repositório for outro, ajuste os links. Para publicar o percentual no Codecov, configure `CODECOV_TOKEN` no GitHub.
+## Testes e verificações
 
-## 6. Limitações conhecidas
+```bash
+python -m pip install -r requirements-dev.txt
+make test
+make lint
+```
 
-- O calendário usa BRT fixo e dias úteis, sem cadastro de feriados. O escalonamento roda ao acessar a fila ou a ficha. Em operação sem tráfego, agende `flask --app app processar-sla`.
-- O limitador por IP é mantido na memória de um processo. O bloqueio por conta persiste no SQLite. Distribuição entre processos exige um armazenamento compartilhado.
-- O SQLite e os anexos locais atendem demonstrações e instalações pequenas. A validação de assinatura verifica o tipo do arquivo, mas não analisa o conteúdo interno de documentos.
-- As notificações ficam em log JSON. O projeto não inclui envio SMTP nem a versão Java.
+O workflow em `.github/workflows/ci.yml` executa testes unitários e de integração (`unittest` + `coverage`), `ruff`, `mypy`, `bandit` e `pip-audit` em Python 3.11 e 3.13.
+
+## Documentação
+
+- [Relatório técnico e arquitetura](docs/relatorio-tecnico.md)
+- [Modelo de ameaças STRIDE](docs/SEGURANCA.md)
+- [Regras de atendimento e SLA](docs/REGRAS.md)
+- [Relatórios e indicadores](docs/RELATORIOS.md)
+- [Operação e deploy](docs/OPERACAO.md)
+- [Changelog](CHANGELOG.md)

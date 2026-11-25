@@ -1,15 +1,17 @@
 """Persistência, relógio de atendimento e validação de anexos."""
 
+from __future__ import annotations
+
 import json
 import logging
 import re
 import sqlite3
 from datetime import UTC, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
-from werkzeug.datastructures import FileStorage
-from werkzeug.utils import secure_filename
+if TYPE_CHECKING:
+    from werkzeug.datastructures import FileStorage
 
 BRT = timezone(timedelta(hours=-3), "BRT")
 WAITING = "Aguardando solicitante"
@@ -117,7 +119,8 @@ def sla_for(ticket: sqlite3.Row, now: datetime, pauses: list[Pause] | None = Non
     first = parse_date(ticket["first_response_at"]) if ticket["first_response_at"] else None
     resolved = parse_date(ticket["resolved_at"]) if ticket["resolved_at"] else None
     paused = ticket["status"] == WAITING
-    first_hours, resolution_hours = SLA_HOURS[ticket["sla_priority"] or ticket["priority"]]
+    priority_key = ticket["sla_priority"] or ticket["priority"]
+    first_hours, resolution_hours = SLA_HOURS.get(priority_key, SLA_HOURS["Média"])
     periods = pauses or []
 
     def elapsed(until: datetime) -> float:
@@ -125,7 +128,7 @@ def sla_for(ticket: sqlite3.Row, now: datetime, pauses: list[Pause] | None = Non
             business_minutes(max(start, left), min(until, right or until))
             for left, right in periods
         )
-        return max(0, business_minutes(start, until) - excluded)
+        return max(0.0, business_minutes(start, until) - excluded)
 
     def deadline(hours: int, through: datetime) -> str:
         minutes = hours * 60.0
@@ -173,6 +176,8 @@ def structured(logger: logging.Logger, event: str, **fields: object) -> None:
 
 
 def validated_attachment(file: FileStorage) -> tuple[str, str, bytes]:
+    from werkzeug.utils import secure_filename
+
     original = file.filename or ""
     name = secure_filename(original)
     extension = Path(name).suffix.lower()

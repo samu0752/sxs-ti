@@ -84,6 +84,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
 )
 
 if os.environ.get("TRUST_RENDER_PROXY") == "1":
@@ -107,6 +108,12 @@ def connect_db() -> sqlite3.Connection:
     db = sqlite3.connect(DATABASE, timeout=10)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
+    db.execute("PRAGMA busy_timeout = 10000")
+    try:
+        db.execute("PRAGMA journal_mode = WAL")
+        db.execute("PRAGMA synchronous = NORMAL")
+    except sqlite3.OperationalError:
+        events_logger.warning("SQLite WAL indisponível; mantendo journal padrão.")
     return db
 
 
@@ -127,7 +134,8 @@ def init_db() -> None:
     with closing(connect_db()) as db, db:
         db.execute("BEGIN IMMEDIATE")
         migrate(db, BASE_DIR / "migrations")
-        if os.environ.get("LOAD_SAMPLE_DATA", "1") == "1":
+        default_sample = "1" if app.config["DEMO_READ_ONLY"] else "0"
+        if os.environ.get("LOAD_SAMPLE_DATA", default_sample) == "1":
             if not db.execute("SELECT 1 FROM tickets LIMIT 1").fetchone():
                 seed_demo_data(db)
 
@@ -316,7 +324,7 @@ app.jinja_env.globals["csrf_token"] = csrf_token
 
 @app.template_filter("datetime_br")
 def datetime_br(value: str) -> str:
-    return datetime.fromisoformat(value).astimezone(BRT).strftime("%d/%m/%Y %H:%M")
+    return parse_date(value).astimezone(BRT).strftime("%d/%m/%Y %H:%M")
 
 
 @app.template_filter("duration")
@@ -363,6 +371,8 @@ def before_request() -> ResponseReturnValue | None:
             )
             .fetchone()
         )
+        if g.user is None:
+            session.pop("user_id", None)
     g.technician = bool(g.user and g.user["role"] == "tecnico")
     g.admin = bool(g.technician and g.user["can_manage_users"])
     if (
@@ -377,6 +387,7 @@ def before_request() -> ResponseReturnValue | None:
             "assign_ticket",
             "comment",
             "manage_users",
+            "audit_logs_view",
             "upload_attachment",
             "download_attachment",
             "rate_ticket",
@@ -401,6 +412,8 @@ def response_headers(response: Response) -> Response:
     )
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     if request.is_secure:
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     if request.endpoint != "static":
@@ -470,6 +483,7 @@ def login() -> ResponseReturnValue:
         user_id = authenticate(identifier[:121], password)
         if user_id is not None:
             session.clear()
+            session.permanent = True
             session["user_id"] = user_id
             return redirect(url_for("index"))
         flash("Usuário, e-mail ou senha inválidos.", "error")
@@ -490,6 +504,7 @@ def account_form(*, provisioned: bool) -> None:
 
 
 @app.route("/criar-conta", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def register() -> ResponseReturnValue:
     if g.demo:
         abort(404)
@@ -529,8 +544,46 @@ def manage_users() -> ResponseReturnValue:
     return render_template("accounts.html", admin=True, accounts=accounts)
 
 
+@app.get("/administracao/auditoria")
+def audit_logs_view() -> ResponseReturnValue:
+    if not g.admin:
+        abort(403)
+    action = request.args.get("action", "").strip()[:60]
+    outcome = request.args.get("outcome", "").strip()[:40]
+    db = get_db()
+    logs = db.execute(
+        """
+        SELECT a.id, a.created_at, a.action, a.outcome, a.detail, u.name AS actor_name
+        FROM audit_logs a
+        LEFT JOIN users u ON u.id = a.actor_id
+        WHERE (? = '' OR a.action = ?) AND (? = '' OR a.outcome = ?)
+        ORDER BY a.id DESC
+        LIMIT 100
+    """,
+        (action, action, outcome, outcome),
+    ).fetchall()
+    actions = [
+        row[0] for row in db.execute("SELECT DISTINCT action FROM audit_logs ORDER BY action")
+    ]
+    outcomes = [
+        row[0] for row in db.execute("SELECT DISTINCT outcome FROM audit_logs ORDER BY outcome")
+    ]
+    return render_template(
+        "audit.html",
+        logs=logs,
+        actions=actions,
+        outcomes=outcomes,
+        selected_action=action,
+        selected_outcome=outcome,
+    )
+
+
 @app.post("/sair")
 def logout() -> ResponseReturnValue:
+    if g.user:
+        db = get_db()
+        with db:
+            audit_log(db, "logout", "sucesso", g.user["id"])
     session.clear()
     return redirect(url_for("login"))
 
@@ -562,10 +615,7 @@ def ticket_by_id(ticket_id: int) -> sqlite3.Row:
 
 def average_minutes(tickets: list[sqlite3.Row], key: str) -> float | None:
     values = [
-        (
-            datetime.fromisoformat(ticket[key]) - datetime.fromisoformat(ticket["created_at"])
-        ).total_seconds()
-        / 60
+        (parse_date(ticket[key]) - parse_date(ticket["created_at"])).total_seconds() / 60
         for ticket in tickets
         if ticket[key]
     ]
@@ -721,6 +771,7 @@ def create_ticket() -> ResponseReturnValue:
             flash(message, "error")
         return index({key: value[:2000] for key, value in values.items()})
 
+    values["email"] = values["email"].lower()
     timestamp = now_iso()
     db = get_db()
     with db:
@@ -890,26 +941,57 @@ def comment(ticket_id: int) -> ResponseReturnValue:
     return redirect(url_for("ticket_detail", ticket_id=ticket_id))
 
 
+def _wants_json_error() -> bool:
+    if request.path.startswith(("/conhecimento/sugestoes", "/health", "/saude")):
+        return True
+    best = request.accept_mimetypes.best_match(["application/json", "text/html"])
+    return best == "application/json" and (
+        request.accept_mimetypes[best] > request.accept_mimetypes["text/html"]
+    )
+
+
 @app.errorhandler(400)
 @app.errorhandler(403)
 @app.errorhandler(404)
+@app.errorhandler(405)
 @app.errorhandler(409)
 @app.errorhandler(413)
+@app.errorhandler(422)
 @app.errorhandler(429)
 def http_error(error: HTTPException) -> ResponseReturnValue:
-    messages = {
-        400: "Verifique as informações enviadas.",
-        403: "Seu perfil não permite essa ação.",
-        404: "O chamado ou a página não foi encontrado.",
-        409: "A ação não está disponível para este chamado.",
-        413: "O envio excede o tamanho permitido.",
-        429: "Muitas tentativas. Aguarde e tente novamente.",
+    catalog = {
+        400: ("Requisição inválida", "Verifique as informações enviadas."),
+        403: ("Acesso negado", "Seu perfil não permite essa ação."),
+        404: ("Página não encontrada", "O chamado ou a página não foi encontrado."),
+        405: ("Método não permitido", "A operação solicitada não é aceita neste endereço."),
+        409: ("Conflito de estado", "A ação não está disponível para este chamado."),
+        413: ("Arquivo muito grande", "O envio excede o tamanho permitido."),
+        422: ("Dados inválidos", "Não foi possível processar os dados enviados."),
+        429: ("Muitas tentativas", "Muitas tentativas. Aguarde e tente novamente."),
     }
     code = error.code or 500
-    message = messages.get(code, "A ação não pôde ser concluída.")
+    title, message = catalog.get(code, ("Erro na solicitação", "A ação não pôde ser concluída."))
     if error.description and code != 429 and error.description != type(error).description:
         message = error.description
-    return render_template("error.html", code=code, message=message), code
+    if _wants_json_error():
+        return jsonify({"code": code, "title": title, "error": message}), code
+    return render_template("error.html", code=code, title=title, message=message), code
+
+
+@app.errorhandler(500)
+def server_error(_error: Exception) -> ResponseReturnValue:
+    structured(
+        events_logger,
+        "http.error",
+        at=now_iso(),
+        endpoint=request.endpoint,
+        status=500,
+    )
+    title = "Erro interno do servidor"
+    message = "Ocorreu um erro interno. Tente novamente em instantes."
+    if _wants_json_error():
+        return jsonify({"code": 500, "title": title, "error": message}), 500
+    return render_template("error.html", code=500, title=title, message=message), 500
 
 
 @app.get("/health")
@@ -1371,6 +1453,9 @@ def export_reports() -> ResponseReturnValue:
             for column in ("tecnico", "patrimonio"):
                 cells[fields.index(column)] = None
         writer.writerow([*cells, "" if met is None else "sim" if met else "não"])
+    if g.user:
+        with db:
+            audit_log(db, "exportacao.csv", "sucesso", g.user["id"], f"linhas={len(rows)}")
     return Response(
         "\ufeff" + output.getvalue(),
         mimetype="text/csv",
