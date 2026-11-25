@@ -93,7 +93,19 @@ class SecurityIDORTests(AppCase):
         self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(
+            response.headers["Referrer-Policy"], "strict-origin-when-cross-origin"
+        )
+        self.assertIn("camera=()", response.headers["Permissions-Policy"])
         self.assertIn("max-age=", response.headers["Strict-Transport-Security"])
+
+    def test_audit_logs_view_restricted_to_admin(self) -> None:
+        requester, _ = self.session_for(2)
+        self.assertEqual(requester.get("/administracao/auditoria").status_code, 403)
+        admin, _ = self.session_for(1)
+        response = admin.get("/administracao/auditoria")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Trilha de auditoria", response.data)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,10 @@
 """Banco temporário independente para os testes de integração."""
 
-import sqlite3
+import os
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO
 
 from flask.testing import FlaskClient
 from werkzeug.security import generate_password_hash
@@ -19,6 +18,12 @@ class AppCase(unittest.TestCase):
     def setUp(self) -> None:
         original = ticket_app.DATABASE
         self.addCleanup(setattr, ticket_app, "DATABASE", original)
+        original_sample = os.environ.get("LOAD_SAMPLE_DATA")
+        os.environ["LOAD_SAMPLE_DATA"] = "0"
+        if original_sample is None:
+            self.addCleanup(os.environ.pop, "LOAD_SAMPLE_DATA", None)
+        else:
+            self.addCleanup(os.environ.__setitem__, "LOAD_SAMPLE_DATA", original_sample)
         config = ticket_app.app.config.copy()
         self.addCleanup(ticket_app.app.config.update, config)
         folder = tempfile.TemporaryDirectory()
